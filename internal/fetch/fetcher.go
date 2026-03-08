@@ -9,9 +9,11 @@ import (
 
 // Options configures the HTTP fetcher.
 type Options struct {
-	Headers map[string]string
-	Cookie  string
-	Timeout time.Duration
+	Headers   map[string]string
+	Cookie    string
+	Timeout   time.Duration
+	JS        bool          // use headless browser for JS-rendered pages
+	WaitExtra time.Duration // extra wait after page idle (for SPAs)
 }
 
 // DefaultOptions returns sensible fetch defaults.

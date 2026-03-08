@@ -15,7 +15,20 @@ func ValidateAgainstPage(s *ExtractionStrategy, html []byte) (int, []string, err
 		return 0, nil, fmt.Errorf("parsing HTML: %w", err)
 	}
 
-	items := doc.Find(s.ItemSelector)
+	// Scope to container if specified (all matching containers)
+	var root *goquery.Selection
+	if s.ContainerSelector != "" {
+		containers := doc.Find(s.ContainerSelector)
+		if containers.Length() == 0 {
+			root = doc.Selection
+		} else {
+			root = containers
+		}
+	} else {
+		root = doc.Selection
+	}
+
+	items := root.Find(s.ItemSelector)
 	count := items.Length()
 
 	var issues []string

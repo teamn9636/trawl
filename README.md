@@ -71,6 +71,13 @@ trawl "https://example.com/products" --strategy cached-strategy.json --format cs
 # Verbose output to see the full pipeline
 trawl "https://example.com/products" --fields "name, price" -v
 
+# JS-rendered pages (React, Vue, Svelte, etc.)
+trawl "https://example.com/spa" --fields "name, value" --js
+
+# Iframe-embedded apps (e.g. HuggingFace Spaces) — extra wait for content to load
+trawl "https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard" \
+    --fields "rank, model, average" --js --wait 10s
+
 # Custom headers and cookies
 trawl "https://example.com/dashboard" --fields "metric, value" \
     --headers "Authorization: Bearer token123" \
@@ -106,6 +113,7 @@ trawl "https://example.com/dashboard" --fields "metric, value" \
 | `--delay` | | `1s` | Delay between requests to same domain |
 | `--no-robots` | | | Ignore robots.txt (use responsibly) |
 | `--js` | | | Enable headless browser for JS-rendered pages |
+| `--wait` | | `0` | Extra time to wait after page load with `--js` (e.g. `5s`) |
 | `--timeout` | | `30s` | Per-request timeout |
 | `--headers` | | | Custom headers (`"Key: Value"` format) |
 | `--cookie` | | | Cookie string to include |
@@ -150,7 +158,7 @@ URL ──► Fetch (Go) ──► Simplify HTML ──► LLM Strategy Derivati
 
 ### The pipeline in detail
 
-1. **Fetch** the target URL with configurable headers, cookies, and timeouts.
+1. **Fetch** the target URL with configurable headers, cookies, and timeouts. With `--js`, uses a headless Chromium browser to render JavaScript. Automatically detects and captures iframe content (e.g. HuggingFace Spaces, embedded Gradio apps).
 2. **Simplify** the HTML: strip scripts, styles, data attributes, and noise. Compute a structural fingerprint of the DOM.
 3. **Check cache**: if a strategy exists for this URL pattern + fingerprint, skip the LLM entirely.
 4. **Derive strategy** via Anthropic API: send the simplified HTML and field descriptions, get back CSS selectors, attribute mappings, transforms, and fallback selectors.
@@ -211,6 +219,25 @@ Extract page
 ```
 
 When a site redesigns, the structural fingerprint changes, the cached strategy is bypassed, and trawl automatically derives a new one. No manual intervention needed.
+
+### JavaScript and iframe support
+
+Many modern sites render content with JavaScript or embed apps inside iframes. trawl handles both:
+
+- **`--js`** launches a headless Chromium browser (auto-downloaded on first use via [rod](https://github.com/go-rod/rod)) to render the page before extraction.
+- **`--wait`** adds extra wait time after page load for SPAs that fetch data asynchronously (e.g. `--wait 5s`).
+- **Iframe detection** — sites like HuggingFace Spaces embed their actual app inside an iframe. trawl automatically inspects all iframes on the page, compares their content richness against the outer page, and uses the iframe content when it contains more extractable data. No special flags needed — just use `--js`.
+
+```bash
+# JS-rendered SPA
+trawl "https://example.com/react-app" --fields "name, value" --js
+
+# Iframe-embedded app with extra wait
+trawl "https://huggingface.co/spaces/open-llm-leaderboard/open_llm_leaderboard" \
+    --fields "rank, model, average" --js --wait 10s
+```
+
+If trawl detects that a page appears to be JavaScript-rendered but `--js` wasn't used, it will suggest adding it in the error message.
 
 ### Preview the plan
 

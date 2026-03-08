@@ -26,7 +26,22 @@ func Apply(strat *strategy.ExtractionStrategy, html []byte) (*Result, error) {
 		return nil, fmt.Errorf("parsing HTML: %w", err)
 	}
 
-	items := doc.Find(strat.ItemSelector)
+	// Scope to container if specified (limits extraction to a specific page section).
+	// Uses all matching containers, not just the first — handles multi-column layouts
+	// where items are split across sibling containers (e.g. 2-column grid).
+	var root *goquery.Selection
+	if strat.ContainerSelector != "" {
+		containers := doc.Find(strat.ContainerSelector)
+		if containers.Length() == 0 {
+			root = doc.Selection
+		} else {
+			root = containers
+		}
+	} else {
+		root = doc.Selection
+	}
+
+	items := root.Find(strat.ItemSelector)
 	if items.Length() == 0 {
 		return nil, fmt.Errorf("item selector %q matched 0 elements", strat.ItemSelector)
 	}
@@ -38,8 +53,15 @@ func Apply(strat *strategy.ExtractionStrategy, html []byte) (*Result, error) {
 
 	result := &Result{Fields: fieldNames}
 
+	type recordWithCount struct {
+		rec       Record
+		populated int
+	}
+	var all []recordWithCount
+
 	items.Each(func(_ int, item *goquery.Selection) {
 		rec := make(Record, len(strat.Fields))
+		populated := 0
 		for _, field := range strat.Fields {
 			raw := extractField(item, field)
 			val, warn := TransformValue(raw, field.Transform, field.Type)
@@ -47,9 +69,50 @@ func Apply(strat *strategy.ExtractionStrategy, html []byte) (*Result, error) {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("field %q: %s", field.Name, warn))
 			}
 			rec[field.Name] = val
+			if val != nil {
+				populated++
+			}
 		}
-		result.Records = append(result.Records, rec)
+		if populated > 0 {
+			all = append(all, recordWithCount{rec, populated})
+		}
 	})
+
+	// Filter out records from mismatched sections: if a majority of records
+	// are fully (or near-fully) populated, drop those with fewer fields.
+	// This handles pages with multiple similar data tables where the container
+	// is slightly too broad.
+	if len(all) > 0 && len(strat.Fields) > 1 {
+		// Find the most common population count
+		countFreq := make(map[int]int)
+		for _, r := range all {
+			countFreq[r.populated]++
+		}
+		bestCount, bestFreq := 0, 0
+		for count, freq := range countFreq {
+			if freq > bestFreq || (freq == bestFreq && count > bestCount) {
+				bestCount = count
+				bestFreq = freq
+			}
+		}
+		// If majority of records share the best population count,
+		// filter out records with fewer populated fields.
+		if bestFreq > len(all)/2 {
+			for _, r := range all {
+				if r.populated >= bestCount {
+					result.Records = append(result.Records, r.rec)
+				}
+			}
+		} else {
+			for _, r := range all {
+				result.Records = append(result.Records, r.rec)
+			}
+		}
+	} else {
+		for _, r := range all {
+			result.Records = append(result.Records, r.rec)
+		}
+	}
 
 	return result, nil
 }

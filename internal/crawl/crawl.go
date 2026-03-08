@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/akdavidsson/trawl/internal/analyze"
 	"github.com/akdavidsson/trawl/internal/config"
@@ -19,6 +20,7 @@ type Options struct {
 	Strategy    *strategy.ExtractionStrategy // pre-loaded strategy (nil = derive)
 	FieldNames  []string
 	FieldDescs  map[string]string
+	Query       string // natural language query (--query mode)
 	Model       string
 	APIKey      string
 	MaxPages    int
@@ -38,9 +40,19 @@ type Result struct {
 func Run(ctx context.Context, opts Options) (*Result, error) {
 	// 1. Fetch the page
 	if opts.Verbose {
-		fmt.Fprintf(os.Stderr, "[fetch] %s\n", opts.URL)
+		if opts.FetchOpts.JS {
+			fmt.Fprintf(os.Stderr, "[fetch] %s (headless browser)\n", opts.URL)
+		} else {
+			fmt.Fprintf(os.Stderr, "[fetch] %s\n", opts.URL)
+		}
 	}
-	html, err := fetch.Fetch(opts.URL, opts.FetchOpts)
+	var html []byte
+	var err error
+	if opts.FetchOpts.JS {
+		html, err = fetch.FetchWithBrowser(opts.URL, opts.FetchOpts)
+	} else {
+		html, err = fetch.Fetch(opts.URL, opts.FetchOpts)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("fetching page: %w", err)
 	}
@@ -53,7 +65,14 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 	// 3. Apply strategy to extract data
 	if opts.Verbose {
-		fmt.Fprintf(os.Stderr, "[extract] applying strategy (item_selector: %s)\n", strat.ItemSelector)
+		if strat.ContainerSelector != "" {
+			fmt.Fprintf(os.Stderr, "[extract] applying strategy (container: %s, item_selector: %s)\n", strat.ContainerSelector, strat.ItemSelector)
+		} else {
+			fmt.Fprintf(os.Stderr, "[extract] applying strategy (item_selector: %s)\n", strat.ItemSelector)
+		}
+		for _, f := range strat.Fields {
+			fmt.Fprintf(os.Stderr, "[extract]   field %q: selector=%q attr=%q\n", f.Name, f.Selector, f.Attribute)
+		}
 	}
 	result, err := extract.Apply(strat, html)
 	if err != nil {
@@ -68,6 +87,9 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 			}
 			result, err = extract.Apply(strat, html)
 			if err != nil {
+				if !opts.FetchOpts.JS && looksJSRendered(html) {
+					return nil, fmt.Errorf("%w\n\n  This page appears to be JavaScript-rendered. Try adding --js to use a headless browser", err)
+				}
 				return nil, fmt.Errorf("extraction after re-derivation: %w", err)
 			}
 		} else {
@@ -171,10 +193,17 @@ func deriveNewStrategy(ctx context.Context, opts Options, html []byte) (*strateg
 		return nil, err
 	}
 
-	// Simplify HTML for the LLM
-	simplified, err := analyze.SimplifyHTML(html)
-	if err != nil {
-		return nil, fmt.Errorf("simplifying HTML: %w", err)
+	// Detect candidate data regions — gives the LLM focused item HTML
+	candidates := detectCandidates(html, opts.Verbose)
+
+	// Only simplify the full page if we have no candidates (fallback)
+	simplified := ""
+	if len(candidates) == 0 {
+		var err error
+		simplified, err = analyze.SimplifyHTML(html)
+		if err != nil {
+			return nil, fmt.Errorf("simplifying HTML: %w", err)
+		}
 	}
 
 	if opts.Verbose {
@@ -182,12 +211,15 @@ func deriveNewStrategy(ctx context.Context, opts Options, html []byte) (*strateg
 	}
 
 	strat, err := strategy.Derive(ctx, strategy.DeriveRequest{
-		SimplifiedHTML: simplified,
-		URL:            opts.URL,
-		FieldNames:     opts.FieldNames,
-		FieldDescs:     opts.FieldDescs,
-		Model:          opts.Model,
-		APIKey:         opts.APIKey,
+		SimplifiedHTML:   simplified,
+		URL:              opts.URL,
+		FieldNames:       opts.FieldNames,
+		FieldDescs:       opts.FieldDescs,
+		Query:            opts.Query,
+		Model:            opts.Model,
+		APIKey:           opts.APIKey,
+		CandidateRegions: candidates,
+		RawHTML:          html,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("strategy derivation: %w", err)
@@ -198,4 +230,98 @@ func deriveNewStrategy(ctx context.Context, opts Options, html []byte) (*strateg
 	}
 
 	return strat, nil
+}
+
+func detectCandidates(html []byte, verbose bool) []strategy.CandidateRegion {
+	regions, err := analyze.DetectCandidateRegions(html)
+	if err != nil || len(regions) == 0 {
+		return nil
+	}
+
+	if verbose {
+		fmt.Fprintf(os.Stderr, "[analyze] detected %d candidate data region(s)\n", len(regions))
+	}
+
+	// Convert to strategy.CandidateRegion with samples
+	var candidates []strategy.CandidateRegion
+	for _, r := range regions {
+		sample := r.HTML
+		if len(sample) > 2000 {
+			sample = sample[:2000] + "\n..."
+		}
+		singleItem := r.SingleItemHTML
+		if len(singleItem) > 2000 {
+			singleItem = singleItem[:2000] + "\n..."
+		}
+
+		// Build item CSS selector
+		itemSel := r.ItemTag
+		if r.ItemClass != "" {
+			// Use first 2-3 stable class tokens for the selector
+			classes := strings.Fields(r.ItemClass)
+			if len(classes) > 3 {
+				classes = classes[:3]
+			}
+			itemSel += "." + strings.Join(classes, ".")
+		}
+
+		if verbose {
+			snippet := singleItem
+			if len(snippet) > 200 {
+				snippet = snippet[:200] + "..."
+			}
+			fmt.Fprintf(os.Stderr, "[analyze]   region %d: selector=%q items=%d itemSel=%q context=%q\n", len(candidates)+1, r.Selector, r.ItemCount, itemSel, r.Context)
+			fmt.Fprintf(os.Stderr, "[analyze]     singleItem: %s\n", snippet)
+		}
+
+		if singleItem == "" {
+			continue
+		}
+
+		candidates = append(candidates, strategy.CandidateRegion{
+			Selector:       r.Selector,
+			ItemCount:      r.ItemCount,
+			Context:        r.Context,
+			Sample:         sample,
+			ItemSelector:   itemSel,
+			SingleItemHTML: singleItem,
+		})
+		// Limit to top 5 regions
+		if len(candidates) >= 5 {
+			break
+		}
+	}
+	return candidates
+}
+
+// looksJSRendered checks if the HTML looks like a client-side SPA
+// where content is loaded dynamically by JavaScript.
+func looksJSRendered(data []byte) bool {
+	limit := len(data)
+	if limit > 16384 {
+		limit = 16384
+	}
+	s := strings.ToLower(string(data[:limit]))
+
+	markers := []string{
+		`id="__next"`,
+		`__next_data__`,
+		`data-reactroot`,
+		`window.__react`,
+		`id="app"`,
+		`id="root"`,
+		`ng-app`,
+		`data-v-`,
+		`gradio`,
+		`svelte`,
+		`__svelte`,
+		`__nuxt`,
+	}
+
+	for _, m := range markers {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
 }

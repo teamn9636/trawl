@@ -37,6 +37,7 @@ var (
 	flagDelay       time.Duration
 	flagNoRobots    bool
 	flagJS          bool
+	flagWait        time.Duration
 	flagTimeout     time.Duration
 	flagHeaders     []string
 	flagCookie      string
@@ -87,6 +88,7 @@ func init() {
 	rootCmd.Flags().DurationVar(&flagDelay, "delay", 1*time.Second, "delay between requests to same domain")
 	rootCmd.Flags().BoolVar(&flagNoRobots, "no-robots", false, "ignore robots.txt")
 	rootCmd.Flags().BoolVar(&flagJS, "js", false, "enable headless browser for JS-rendered pages")
+	rootCmd.Flags().DurationVar(&flagWait, "wait", 0, "extra time to wait after page load with --js (e.g. 5s)")
 	rootCmd.Flags().DurationVar(&flagTimeout, "timeout", 30*time.Second, "per-request timeout")
 	rootCmd.Flags().StringSliceVar(&flagHeaders, "headers", nil, `custom headers ("Key: Value" format)`)
 	rootCmd.Flags().StringVar(&flagCookie, "cookie", "", "cookie string to include")
@@ -134,9 +136,11 @@ func run(cmd *cobra.Command, args []string) error {
 
 	// 3. Build fetch options
 	fetchOpts := fetch.Options{
-		Timeout: flagTimeout,
-		Cookie:  flagCookie,
-		Headers: parseHeaders(flagHeaders),
+		Timeout:   flagTimeout,
+		Cookie:    flagCookie,
+		Headers:   parseHeaders(flagHeaders),
+		JS:        flagJS,
+		WaitExtra: flagWait,
 	}
 
 	// 4. Load pre-existing strategy if provided
@@ -171,6 +175,7 @@ func run(cmd *cobra.Command, args []string) error {
 		Strategy:   strat,
 		FieldNames: userSchema.FieldNames(),
 		FieldDescs: fieldDescs,
+		Query:      flagQuery,
 		Model:      cfg.Model,
 		APIKey:     cfg.APIKey,
 		MaxPages:   flagMaxPages,
@@ -233,15 +238,15 @@ func runPlan(ctx context.Context, url string, cfg *config.Config, userSchema *sc
 	if cfg.Verbose {
 		fmt.Fprintf(os.Stderr, "[fetch] %s\n", url)
 	}
-	html, err := fetch.Fetch(url, fetchOpts)
-	if err != nil {
-		return fmt.Errorf("fetching page: %w", err)
+	var html []byte
+	var fetchErr error
+	if fetchOpts.JS {
+		html, fetchErr = fetch.FetchWithBrowser(url, fetchOpts)
+	} else {
+		html, fetchErr = fetch.Fetch(url, fetchOpts)
 	}
-
-	// Simplify HTML
-	simplified, err := analyze.SimplifyHTML(html)
-	if err != nil {
-		return fmt.Errorf("simplifying HTML: %w", err)
+	if fetchErr != nil {
+		return fmt.Errorf("fetching page: %w", fetchErr)
 	}
 
 	// Compute fingerprint
@@ -258,15 +263,30 @@ func runPlan(ctx context.Context, url string, cfg *config.Config, userSchema *sc
 		}
 	}
 
+	// Detect candidate regions
+	candidates := buildCandidates(html)
+
+	// Only simplify full HTML if we have no candidates
+	simplified := ""
+	if len(candidates) == 0 {
+		simplified, err = analyze.SimplifyHTML(html)
+		if err != nil {
+			return fmt.Errorf("simplifying HTML: %w", err)
+		}
+	}
+
 	// Derive strategy
 	fmt.Fprintf(os.Stderr, "[strategy] deriving via LLM (%s)...\n", cfg.Model)
 	strat, err := strategy.Derive(ctx, strategy.DeriveRequest{
-		SimplifiedHTML: simplified,
-		URL:            url,
-		FieldNames:     userSchema.FieldNames(),
-		FieldDescs:     fieldDescs,
-		Model:          cfg.Model,
-		APIKey:         cfg.APIKey,
+		SimplifiedHTML:   simplified,
+		URL:              url,
+		FieldNames:       userSchema.FieldNames(),
+		FieldDescs:       fieldDescs,
+		Query:            flagQuery,
+		Model:            cfg.Model,
+		APIKey:           cfg.APIKey,
+		CandidateRegions: candidates,
+		RawHTML:          html,
 	})
 	if err != nil {
 		return fmt.Errorf("strategy derivation: %w", err)
@@ -278,6 +298,9 @@ func runPlan(ctx context.Context, url string, cfg *config.Config, userSchema *sc
 
 	// Display the plan
 	fmt.Printf("Strategy for %s\n", url)
+	if strat.ContainerSelector != "" {
+		fmt.Printf("  Container: %s\n", strat.ContainerSelector)
+	}
 	fmt.Printf("  Item selector: %s\n", strat.ItemSelector)
 	fmt.Printf("  Fields:\n")
 	for _, f := range strat.Fields {
@@ -332,4 +355,37 @@ func writeOutput(result *extract.Result, format, outputPath string) error {
 	default:
 		return fmt.Errorf("unknown format %q; use json, jsonl, csv, or parquet", format)
 	}
+}
+
+func buildCandidates(html []byte) []strategy.CandidateRegion {
+	regions, _ := analyze.DetectCandidateRegions(html)
+	var candidates []strategy.CandidateRegion
+	for _, r := range regions {
+		singleItem := r.SingleItemHTML
+		if len(singleItem) > 2000 {
+			singleItem = singleItem[:2000] + "\n..."
+		}
+		itemSel := r.ItemTag
+		if r.ItemClass != "" {
+			classes := strings.Fields(r.ItemClass)
+			if len(classes) > 3 {
+				classes = classes[:3]
+			}
+			itemSel += "." + strings.Join(classes, ".")
+		}
+		if singleItem == "" {
+			continue
+		}
+		candidates = append(candidates, strategy.CandidateRegion{
+			Selector:       r.Selector,
+			ItemCount:      r.ItemCount,
+			Context:        r.Context,
+			ItemSelector:   itemSel,
+			SingleItemHTML: singleItem,
+		})
+		if len(candidates) >= 5 {
+			break
+		}
+	}
+	return candidates
 }
