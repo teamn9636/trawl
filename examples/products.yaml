@@ -1,0 +1,19 @@
+name: product_listing
+url: "https://example.com/products/*"
+fields:
+  - name: product_name
+    type: string
+    description: "The product's display name"
+  - name: price
+    type: float
+    description: "Price in local currency"
+  - name: currency
+    type: string
+    description: "Currency code (USD, EUR, etc.)"
+  - name: in_stock
+    type: bool
+    description: "Whether the item is available"
+  - name: rating
+    type: float
+    nullable: true
+    description: "Star rating out of 5"

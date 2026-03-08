@@ -1,0 +1,20 @@
+name: job_listings
+url: "https://example.com/jobs/*"
+fields:
+  - name: title
+    type: string
+    description: "Job title"
+  - name: company
+    type: string
+    description: "Company name"
+  - name: location
+    type: string
+    description: "Job location"
+  - name: salary
+    type: string
+    nullable: true
+    description: "Salary range"
+  - name: date_posted
+    type: date
+    nullable: true
+    description: "When the job was posted"
